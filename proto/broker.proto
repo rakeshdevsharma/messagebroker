@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package broker;
+
+option go_package = "messagebroker/proto";
+
+service Broker {
+  rpc CreateTopic(CreateTopicRequest) returns (Topic);
+  rpc CreateConsumerGroup(CreateConsumerGroupRequest) returns (ConsumerGroup);
+  rpc CreateSubscription(CreateSubscriptionRequest) returns (Subscription);
+  rpc Publish(PublishRequest) returns (PublishResponse);
+
+  // Consume is a bidirectional stream: the client registers once, then
+  // exchanges MessageDelivery/Ack pairs for as long as the connection is
+  // held open. The stream lifetime is how the broker detects a dead
+  // consumer quickly (see ReleaseByConsumer in internal/store).
+  rpc Consume(stream ConsumeClientMsg) returns (stream ConsumeServerMsg);
+}
+
+message Topic {
+  int64 id = 1;
+  string name = 2;
+}
+
+message CreateTopicRequest {
+  string name = 1;
+}
+
+message ConsumerGroup {
+  int64 id = 1;
+  string name = 2;
+}
+
+message CreateConsumerGroupRequest {
+  string name = 1;
+}
+
+message Subscription {
+  int64 topic_id = 1;
+  int64 consumer_group_id = 2;
+}
+
+message CreateSubscriptionRequest {
+  string topic_name = 1;
+  // Optional: if empty, the subscription is created against the default
+  // consumer group.
+  string consumer_group_name = 2;
+}
+
+message PublishRequest {
+  string topic_name = 1;
+  bytes content = 2;
+}
+
+message PublishResponse {
+  int64 message_id = 1;
+}
+
+message RegisterRequest {
+  string consumer_group_name = 1;
+  string consumer_name = 2;
+}
+
+message AckRequest {
+  int64 message_id = 1;
+}
+
+message ConsumeClientMsg {
+  oneof kind {
+    RegisterRequest register = 1;
+    AckRequest ack = 2;
+  }
+}
+
+message MessageDelivery {
+  int64 message_id = 1;
+  string topic_name = 2;
+  bytes content = 3;
+  int32 delivery_count = 4;
+}
+
+message ConsumeServerMsg {
+  oneof kind {
+    MessageDelivery message = 1;
+  }
+}

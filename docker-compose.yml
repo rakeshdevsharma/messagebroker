@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: messagebroker
+      POSTGRES_USER: messagebroker
+      POSTGRES_PASSWORD: messagebroker
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./migrations/0001_init.sql:/docker-entrypoint-initdb.d/0001_init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U messagebroker"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  broker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      BROKER_DATABASE_URL: postgres://messagebroker:messagebroker@postgres:5432/messagebroker
+      BROKER_LISTEN_ADDR: :50051
+    ports:
+      - "50051:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
