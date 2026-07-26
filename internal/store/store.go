@@ -11,7 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound      = errors.New("not found")
+	ErrAlreadyExists = errors.New("already exists")
+)
 
 type Store struct {
 	pool *pgxpool.Pool
@@ -49,7 +52,10 @@ func (s *Store) CreateTopic(ctx context.Context, name string) (Topic, error) {
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO topics (name) VALUES ($1) RETURNING id, name`, name,
 	).Scan(&t.ID, &t.Name)
-	return t, err
+	if err != nil {
+		return t, wrapAlreadyExists(err)
+	}
+	return t, nil
 }
 
 func (s *Store) GetTopicByName(ctx context.Context, name string) (Topic, error) {
@@ -68,7 +74,10 @@ func (s *Store) CreateConsumerGroup(ctx context.Context, name string) (ConsumerG
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO consumer_group (name) VALUES ($1) RETURNING id, name`, name,
 	).Scan(&g.ID, &g.Name)
-	return g, err
+	if err != nil {
+		return g, wrapAlreadyExists(err)
+	}
+	return g, nil
 }
 
 // EnsureConsumerGroupByName gets or creates a consumer group by name. Used

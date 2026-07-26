@@ -16,6 +16,7 @@ how it was built and what's left.
 | 7 | Store-level regression tests | `internal/store/store_test.go`, `testutil_test.go` | Done (compiles; not yet run — no Docker in dev sandbox) |
 | 8 | Local Postgres for dev/manual testing | `docker-compose.yml` (`postgres` service) | Done |
 | 9 | Containerize the broker itself | `Dockerfile`, `docker-compose.yml` (`broker` service) | Done |
+| 10 | Producer and consumer CLIs | `cmd/producer/main.go`, `cmd/consumer/main.go` | Done |
 
 ## File-by-file breakdown
 
@@ -41,6 +42,15 @@ how it was built and what's left.
 - **`cmd/broker/main.go`** — reads `BROKER_DATABASE_URL` / `BROKER_LISTEN_ADDR`, opens the
   pgx pool, starts the gRPC server and the two background loops, shuts down gracefully on
   `SIGTERM`/interrupt.
+- **`cmd/producer/main.go`** — dials the broker, optionally ensures the topic exists
+  (`-ensure-topic`, tolerates `AlreadyExists`), then publishes either a single `-message` or
+  newline-delimited stdin. Run multiple instances concurrently to exercise "multiple
+  producers publishing simultaneously."
+- **`cmd/consumer/main.go`** — dials the broker, ensures the subscription exists, opens the
+  `Consume` stream, sends the initial `Register` (with an auto-generated `hostname-pid`
+  name if `-name` isn't given, so N instances can join the same `-group` without manual
+  provisioning), then loops printing each delivery and acking it. Handles Ctrl+C /
+  `SIGTERM` for a clean disconnect (which triggers the broker's fast-path release).
 
 ## Testing
 
@@ -56,12 +66,17 @@ how it was built and what's left.
   - **Caveat**: these compile and pass `go vet`, but have not been executed in this
     environment — there is no Docker/Podman/Colima daemon available here. Run
     `go test ./...` on a machine with Docker to actually execute them.
-- **Manual/smoke**: confirmed `cmd/broker` starts, binds its listen address, and its
-  background loops fail gracefully (not a panic) when Postgres is unreachable.
-- **Not yet done**: an end-to-end test driving the actual `Consume` gRPC stream (as
-  opposed to the `store` layer directly) — e.g. two concurrent stream clients in one
-  consumer group split a batch of published messages, and killing one mid-flight causes
-  its in-flight message to reappear on the other.
+- **Manual/smoke**: confirmed `cmd/broker`, `cmd/producer`, and `cmd/consumer` all start
+  and fail gracefully (not a panic) when the broker/Postgres is unreachable — e.g.
+  `producer`/`consumer` against a closed port return a clean `Unavailable` gRPC error and
+  exit 1.
+- **Not yet done**: actually running the end-to-end scenario against a live broker +
+  Postgres — `cmd/producer`/`cmd/consumer` now exist and are the intended driver for it
+  (e.g. two `cmd/consumer` instances with the same `-group` splitting messages published
+  by `cmd/producer`, then killing one mid-flight and confirming its in-flight message
+  reappears on the other), but it hasn't been executed here because there is no
+  Docker/Podman/Colima daemon in this dev sandbox to run Postgres against. This needs to
+  be run on a machine with Docker (see Deployment below).
 
 ## Deployment
 

@@ -40,11 +40,11 @@ func (s *Server) Consume(stream pb.Broker_ConsumeServer) error {
 
 	group, err := s.Store.EnsureConsumerGroupByName(ctx, groupName)
 	if err != nil {
-		return err
+		return toGRPCError(err)
 	}
 	consumer, err := s.Store.EnsureConsumer(ctx, group.ID, reg.GetConsumerName())
 	if err != nil {
-		return err
+		return toGRPCError(err)
 	}
 
 	recvErrCh := make(chan error, 1)
