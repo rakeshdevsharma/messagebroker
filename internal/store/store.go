@@ -212,7 +212,7 @@ func (s *Store) Claim(ctx context.Context, groupID, consumerID int64, leaseSecon
 		`UPDATE message_queue
 		 SET consumer_id = $1, state = 'unacked',
 		     delivery_count = delivery_count + 1,
-		     lease_expires_at = now() + ($2 || ' seconds')::interval
+		     lease_expires_at = now() + ($2::int * interval '1 second')
 		 WHERE id = $3
 		 RETURNING delivery_count`,
 		consumerID, leaseSeconds, queueRowID,
