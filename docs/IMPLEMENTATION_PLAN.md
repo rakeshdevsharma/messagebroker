@@ -17,6 +17,9 @@ how it was built and what's left.
 | 8 | Local Postgres for dev/manual testing | `docker-compose.yml` (`postgres` service) | Done |
 | 9 | Containerize the broker itself | `Dockerfile`, `docker-compose.yml` (`broker` service) | Done |
 | 10 | Producer and consumer CLIs | `cmd/producer/main.go`, `cmd/consumer/main.go` | Done |
+| 11 | Expanded store-layer tests | `internal/store/store_more_test.go` | Done (compiles; DB-backed, not yet run — no Docker) |
+| 12 | gRPC/stream-level tests (bufconn) | `internal/broker/testutil_test.go`, `server_test.go`, `consume_test.go` | Done (compiles; DB-backed, not yet run — no Docker) |
+| 13 | CLI unit tests | `cmd/consumer/main_test.go` | Done — actually run, passing |
 
 ## File-by-file breakdown
 
@@ -54,29 +57,56 @@ how it was built and what's left.
 
 ## Testing
 
-- **Unit/integration** (`internal/store/store_test.go`): uses `testcontainers-go` to spin
-  up a real `postgres:16-alpine` per test run and applies `migrations/0001_init.sql`
-  directly, so these exercise real Postgres locking behavior rather than a mock. Covers:
+- **Store layer** (`internal/store/store_test.go`, `store_more_test.go`): uses
+  `testcontainers-go` to spin up a real `postgres:16-alpine` per test run and applies
+  `migrations/0001_init.sql` directly, so these exercise real Postgres locking behavior
+  rather than a mock. Covers:
   - Concurrent `Claim` calls across many consumers never double-deliver a message.
   - A stale `Ack` (arriving after reassignment) is a no-op and doesn't disturb the new
-    owner's row.
-  - `CleanupMessages` keeps unacked messages and removes fully-acked ones.
-  - `ReapExpiredLeases` recovers a message whose lease passed with no ack.
-  - `CreateSubscription` with no group name falls back to `default`.
-  - **Caveat**: these compile and pass `go vet`, but have not been executed in this
-    environment — there is no Docker/Podman/Colima daemon available here. Run
-    `go test ./...` on a machine with Docker to actually execute them.
+    owner's row; acking an unknown message likewise reports `owned=false`, not an error.
+  - `CleanupMessages` keeps unacked messages, removes fully-acked ones, and removes a
+    published message immediately if it has zero subscribers.
+  - `ReapExpiredLeases` recovers a message whose lease passed with no ack, and leaves
+    live (non-expired) leases untouched.
+  - `CreateTopic`/`CreateConsumerGroup` map a duplicate name to `ErrAlreadyExists`;
+    `GetTopicByName`/`Publish` map an unknown topic to `ErrNotFound`.
+  - `Publish` fans out to every currently-subscribed group and no others; `Claim` returns
+    messages in FIFO (publish) order and increments `delivery_count` on redelivery.
+  - `CreateSubscription`, `EnsureConsumerGroupByName`, and `EnsureConsumer` are all
+    idempotent — repeat calls reuse the same row rather than erroring or duplicating.
+- **gRPC/broker layer** (`internal/broker/server_test.go`, `consume_test.go`,
+  `testutil_test.go`): each test boots the real `Server` behind an in-memory `bufconn`
+  listener (real proto wire encoding and stream framing, no TCP port needed) backed by
+  its own throwaway Postgres container. Covers:
+  - Every unary RPC's success path and its error mapping (`AlreadyExists` on duplicate
+    create, `NotFound` on an unknown topic).
+  - `CreateSubscription`/`Consume` both fall back to the default consumer group when no
+    group name is given.
+  - End-to-end `Consume` stream: publish → receive over the real stream → ack → confirm
+    the ack actually cleared the queue row.
+  - Two consumers in the same group, driven over two real streams, split a batch of
+    published messages with no duplicates and no missed messages.
+  - Disconnecting a consumer's stream without acking (context cancellation, simulating a
+    crash) makes its in-flight message immediately claimable by another consumer via the
+    fast path — verified by checking `delivery_count` increments to 2 on the redelivery.
+  - The first message on a `Consume` stream must be a `Register`, or the RPC fails with
+    `InvalidArgument`.
+  - **Caveat**: all of the above compile, pass `go vet`, and (confirmed in this
+    environment) fail with a clean "rootless Docker not found" error at the
+    testcontainers startup step — not a code/logic error — because there is no
+    Docker/Podman/Colima daemon available here. Run `go test ./...` on a machine with
+    Docker to actually execute them.
+- **CLI unit tests** (`cmd/consumer/main_test.go`): the pure-logic helpers
+  (`defaultConsumerName`, `groupLabel`) have no network/DB dependency and were actually
+  run in this environment — `go test ./cmd/consumer/...` passes.
 - **Manual/smoke**: confirmed `cmd/broker`, `cmd/producer`, and `cmd/consumer` all start
   and fail gracefully (not a panic) when the broker/Postgres is unreachable — e.g.
   `producer`/`consumer` against a closed port return a clean `Unavailable` gRPC error and
   exit 1.
-- **Not yet done**: actually running the end-to-end scenario against a live broker +
-  Postgres — `cmd/producer`/`cmd/consumer` now exist and are the intended driver for it
-  (e.g. two `cmd/consumer` instances with the same `-group` splitting messages published
-  by `cmd/producer`, then killing one mid-flight and confirming its in-flight message
-  reappears on the other), but it hasn't been executed here because there is no
-  Docker/Podman/Colima daemon in this dev sandbox to run Postgres against. This needs to
-  be run on a machine with Docker (see Deployment below).
+- **Not yet done**: actually executing the Postgres-backed suites and the full
+  producer-CLI → broker → Postgres → consumer-CLI path end to end, since that requires a
+  real Docker daemon this sandbox doesn't have. Run `go test ./...` and the
+  `docker-compose` stack on a machine with Docker to get that confirmation.
 
 ## Deployment
 
