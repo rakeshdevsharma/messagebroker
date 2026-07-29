@@ -4,6 +4,7 @@ package broker
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -50,31 +51,39 @@ func NewServer(st *store.Store, leaseSeconds int, pollInterval time.Duration) *S
 func (s *Server) CreateTopic(ctx context.Context, req *pb.CreateTopicRequest) (*pb.Topic, error) {
 	t, err := s.Store.CreateTopic(ctx, req.GetName())
 	if err != nil {
+		log.Printf("CreateTopic failed name=%q: %v", req.GetName(), err)
 		return nil, toGRPCError(err)
 	}
+	log.Printf("CreateTopic ok id=%d name=%q", t.ID, t.Name)
 	return &pb.Topic{Id: t.ID, Name: t.Name}, nil
 }
 
 func (s *Server) CreateConsumerGroup(ctx context.Context, req *pb.CreateConsumerGroupRequest) (*pb.ConsumerGroup, error) {
 	g, err := s.Store.CreateConsumerGroup(ctx, req.GetName())
 	if err != nil {
+		log.Printf("CreateConsumerGroup failed name=%q: %v", req.GetName(), err)
 		return nil, toGRPCError(err)
 	}
+	log.Printf("CreateConsumerGroup ok id=%d name=%q", g.ID, g.Name)
 	return &pb.ConsumerGroup{Id: g.ID, Name: g.Name}, nil
 }
 
 func (s *Server) CreateSubscription(ctx context.Context, req *pb.CreateSubscriptionRequest) (*pb.Subscription, error) {
 	sub, err := s.Store.CreateSubscription(ctx, req.GetTopicName(), req.GetConsumerGroupName())
 	if err != nil {
+		log.Printf("CreateSubscription failed topic=%q group=%q: %v", req.GetTopicName(), req.GetConsumerGroupName(), err)
 		return nil, toGRPCError(err)
 	}
+	log.Printf("CreateSubscription ok topic=%q group=%q topic_id=%d group_id=%d", req.GetTopicName(), req.GetConsumerGroupName(), sub.TopicID, sub.ConsumerGroupID)
 	return &pb.Subscription{TopicId: sub.TopicID, ConsumerGroupId: sub.ConsumerGroupID}, nil
 }
 
 func (s *Server) Publish(ctx context.Context, req *pb.PublishRequest) (*pb.PublishResponse, error) {
 	id, err := s.Store.Publish(ctx, req.GetTopicName(), req.GetContent())
 	if err != nil {
+		log.Printf("Publish failed topic=%q: %v", req.GetTopicName(), err)
 		return nil, toGRPCError(err)
 	}
+	log.Printf("Publish ok topic=%q message_id=%d bytes=%d", req.GetTopicName(), id, len(req.GetContent()))
 	return &pb.PublishResponse{MessageId: id}, nil
 }

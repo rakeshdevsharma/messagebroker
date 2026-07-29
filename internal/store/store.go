@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"errors"
+	"log"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -185,6 +186,7 @@ type ClaimedMessage struct {
 // and each lock a distinct row instead of racing on the same one — this is
 // what makes horizontal scaling of a consumer group safe.
 func (s *Store) Claim(ctx context.Context, groupID, consumerID int64, leaseSeconds int) (*ClaimedMessage, error) {
+	log.Printf("store: claiming message for consumer=%d group=%d", consumerID, groupID)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -212,7 +214,7 @@ func (s *Store) Claim(ctx context.Context, groupID, consumerID int64, leaseSecon
 		`UPDATE message_queue
 		 SET consumer_id = $1, state = 'unacked',
 		     delivery_count = delivery_count + 1,
-		     lease_expires_at = now() + ($2 || ' seconds')::interval
+		     lease_expires_at = now() + ($2::integer * interval '1 second')
 		 WHERE id = $3
 		 RETURNING delivery_count`,
 		consumerID, leaseSeconds, queueRowID,
@@ -236,6 +238,8 @@ func (s *Store) Claim(ctx context.Context, groupID, consumerID int64, leaseSecon
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+
+	log.Printf("store: claimed message id=%d for consumer=%d group=%d delivery_count=%d", messageID, consumerID, groupID, deliveryCount)
 
 	return &ClaimedMessage{
 		MessageID:     messageID,
@@ -265,13 +269,19 @@ func (s *Store) Ack(ctx context.Context, messageID, groupID, consumerID int64) (
 // disconnects: it immediately frees any message still checked out to that
 // consumer instead of waiting for the lease to expire.
 func (s *Store) ReleaseByConsumer(ctx context.Context, consumerID int64) error {
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`UPDATE message_queue
 		 SET state = 'ready', consumer_id = NULL, lease_expires_at = NULL
 		 WHERE consumer_id = $1 AND state = 'unacked'`,
 		consumerID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		log.Printf("store: released %d unacked message(s) for consumer=%d", n, consumerID)
+	}
+	return nil
 }
 
 // ReapExpiredLeases is the slow-path safety net: it recovers messages held

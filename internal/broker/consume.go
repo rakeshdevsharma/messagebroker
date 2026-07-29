@@ -46,6 +46,7 @@ func (s *Server) Consume(stream pb.Broker_ConsumeServer) error {
 	if err != nil {
 		return toGRPCError(err)
 	}
+	log.Printf("Consume connected group=%q (id=%d) consumer=%q (id=%d)", groupName, group.ID, consumer.Name, consumer.ID)
 
 	recvErrCh := make(chan error, 1)
 	go func() {
@@ -72,7 +73,8 @@ func (s *Server) Consume(stream pb.Broker_ConsumeServer) error {
 	ticker := time.NewTicker(s.PollInterval)
 	defer ticker.Stop()
 
-	release := func() {
+	release := func(reason string) {
+		log.Printf("Consume disconnecting consumer=%d group=%d: %s", consumer.ID, group.ID, reason)
 		if err := s.Store.ReleaseByConsumer(context.Background(), consumer.ID); err != nil {
 			log.Printf("release on disconnect failed: consumer=%d: %v", consumer.ID, err)
 		}
@@ -81,14 +83,15 @@ func (s *Server) Consume(stream pb.Broker_ConsumeServer) error {
 	for {
 		select {
 		case <-ctx.Done():
-			release()
+			release("stream context canceled")
 			return ctx.Err()
 
 		case err := <-recvErrCh:
-			release()
 			if errors.Is(err, io.EOF) {
+				release("client closed stream")
 				return nil
 			}
+			release("recv error: " + err.Error())
 			return err
 
 		case <-ticker.C:
@@ -100,6 +103,7 @@ func (s *Server) Consume(stream pb.Broker_ConsumeServer) error {
 			if claimed == nil {
 				continue
 			}
+			log.Printf("delivering message id=%d topic=%q consumer=%d delivery_count=%d", claimed.MessageID, claimed.TopicName, consumer.ID, claimed.DeliveryCount)
 			err = stream.Send(&pb.ConsumeServerMsg{
 				Kind: &pb.ConsumeServerMsg_Message{
 					Message: &pb.MessageDelivery{
@@ -111,7 +115,7 @@ func (s *Server) Consume(stream pb.Broker_ConsumeServer) error {
 				},
 			})
 			if err != nil {
-				release()
+				release("send failed: " + err.Error())
 				return err
 			}
 		}

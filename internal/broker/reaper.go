@@ -11,12 +11,14 @@ import (
 // messages held by a consumer that is still connected but hung and never
 // acking — a case stream-disconnect detection alone would miss.
 func (s *Server) RunLeaseReaper(ctx context.Context, interval time.Duration) {
+	log.Printf("lease reaper started interval=%s", interval)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.Println("lease reaper stopped")
 			return
 		case <-ticker.C:
 			n, err := s.Store.ReapExpiredLeases(ctx)

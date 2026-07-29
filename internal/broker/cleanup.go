@@ -11,12 +11,14 @@ import (
 // message and its message_queue fan-out rows in a single transaction, "no
 // remaining queue rows" here only ever means fully-acked, never mid-publish.
 func (s *Server) RunMessageCleanup(ctx context.Context, interval time.Duration) {
+	log.Printf("message cleanup started interval=%s", interval)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.Println("message cleanup stopped")
 			return
 		case <-ticker.C:
 			n, err := s.Store.CleanupMessages(ctx)
