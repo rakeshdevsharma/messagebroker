@@ -186,7 +186,6 @@ type ClaimedMessage struct {
 // and each lock a distinct row instead of racing on the same one — this is
 // what makes horizontal scaling of a consumer group safe.
 func (s *Store) Claim(ctx context.Context, groupID, consumerID int64, leaseSeconds int) (*ClaimedMessage, error) {
-	log.Printf("store: claiming message for consumer=%d group=%d", consumerID, groupID)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
